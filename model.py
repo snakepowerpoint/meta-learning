@@ -1,67 +1,110 @@
 import tensorflow as tf
 
 
-def resnet18(inputs):  # num_class
-    with tf.variable_scope("resnet"):
-        training = tf.placeholder(tf.bool, name='training')
-
-        # stage 1
-        w_conv1 = weight_variable(shape=[7, 7, 3, 64])
-        x = tf.nn.conv2d(inputs, w_conv1, strides=[1, 2, 2, 1], padding='SAME')
-        x = tf.layers.batch_normalization(x, axis=3, training=training)
+def conv4(inputs, training):
+    with tf.variable_scope("conv4"):
+        # block 1
+        w_conv1 = weight_variable(shape=[3, 3, 3, 32])
+        x = tf.nn.conv2d(inputs, w_conv1, strides=[1, 1, 1, 1], padding='SAME')
+        x = tf.layers.batch_normalization(x, axis=-1, training=training)
         x = tf.nn.relu(x)
-        x = tf.nn.max_pool(x, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='VALID')
+        x = tf.nn.max_pool(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
 
-        # stage 2
-        x = convolutional_block(x, 3, [64, 64], 64, stride=1, stage=2, block=1, training=training)
-        x = identity_block(x, 3, [64, 64], 64, stage=2, block=2, training=training)
+        # block 2
+        w_conv2 = weight_variable(shape=[3, 3, 32, 32])
+        x = tf.nn.conv2d(x, w_conv2, strides=[1, 1, 1, 1], padding='SAME')
+        x = tf.layers.batch_normalization(x, axis=-1, training=training)
+        x = tf.nn.relu(x)
+        x = tf.nn.max_pool(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
 
-        # stage 3
-        x = convolutional_block(x, 3, [128, 128], 64, stride=2, stage=3, block=1, training=training)
-        x = identity_block(x, 3, [128, 128], 128, stage=3, block=2, training=training)
+        # block 3
+        w_conv3 = weight_variable(shape=[3, 3, 32, 32])
+        x = tf.nn.conv2d(x, w_conv3, strides=[1, 1, 1, 1], padding='SAME')
+        x = tf.layers.batch_normalization(x, axis=-1, training=training)
+        x = tf.nn.relu(x)
+        x = tf.nn.max_pool(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
 
-        # stage 4
-        x = convolutional_block(x, 3, [256, 256], 128, stride=2, stage=4, block=1, training=training)
-        x = identity_block(x, 3, [256, 256], 256, stage=4, block=2, training=training)
-
-        # stage 5
-        x = convolutional_block(x, 3, [512, 512], 256, stride=2, stage=5, block=1, training=training)
-        x = identity_block(x, 3, [512, 512], 512, stage=5, block=2, training=training)
+        # block 4
+        w_conv4 = weight_variable(shape=[3, 3, 32, 32])
+        x = tf.nn.conv2d(x, w_conv4, strides=[1, 1, 1, 1], padding='SAME')
+        x = tf.layers.batch_normalization(x, axis=-1, training=training)
+        x = tf.nn.relu(x)
+        x = tf.nn.max_pool(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
 
         # global average pooling
         avg_pool = tf.reduce_mean(x, axis=[1, 2], name='avg_pool', keepdims=True)
         flatten = tf.layers.flatten(avg_pool)
 
-        # fc layer
+        # fc 1
         fc1 = tf.layers.dense(flatten, units=512, activation=tf.nn.relu)
+
+    return fc1
+
+def resnet12(inputs, training):  # num_class
+    with tf.variable_scope("resnet"):
+        # block 1
+        x = convolutional_block(inputs, kernel_size=3, in_filter=3, out_filter=64, block=1, training=training)
+
+        # block 2
+        x = convolutional_block(inputs, 3, 64, 96, 2, training)
+
+        # block 3
+        x = convolutional_block(inputs, 3, 96, 128, 3, training)
+
+        # block 4
+        x = convolutional_block(inputs, 3, 128, 256, 4, training)
+    
+        # global average pooling
+        w_conv1 = weight_variable(shape=[1, 1, 256, 2048])
+        x = tf.nn.conv2d(x, w_conv1, strides=[1, 1, 1, 1], padding='SAME')
+
+        avg_pool = tf.nn.avg_pool(x, ksize=[1, 6, 6, 1], strides=[1, 1, 1, 1], padding='VALID')
+        avg_pool = tf.nn.relu(avg_pool)
+        avg_pool = tf.nn.dropout(avg_pool, keep_prob=0.9)
+
+        w_conv2 = weight_variable(shape=[1, 1, 2048, 384])
+        x = tf.nn.conv2d(x, w_conv2, strides=[1, 1, 1, 1], padding='SAME')
+
+        avg_pool = tf.reduce_mean(x, axis=[1, 2], name='avg_pool', keepdims=True)
+        flatten = tf.layers.flatten(avg_pool)
+
+        # fc layer
+        #fc1 = tf.layers.dense(flatten, units=512, activation=tf.nn.relu)
         #fc2 = tf.layers.dense(flatten, units=num_class, activation=tf.nn.softmax)
         
-    return fc1, training
+    return flatten
         
-def convolutional_block(inputs, kernel_size, out_filter, in_filter, stride, stage, block, training):
-    f1, f2 = out_filter
-    block_name = 'res_conv' + str(stage) + "_" + str(block)
+def convolutional_block(inputs, kernel_size, in_filter, out_filter, block, training):
+    block_name = 'block' + str(block)
     with tf.variable_scope(block_name):
         short_cut = inputs
 
         # first
-        w_conv1 = weight_variable(shape=[kernel_size, kernel_size, in_filter, f1])
-        x = tf.nn.conv2d(inputs, w_conv1, strides=[1, stride, stride, 1], padding='SAME')
-        x = tf.layers.batch_normalization(x, axis=3, training=training)
-        x = tf.nn.relu(x)
+        w_conv1 = weight_variable(shape=[kernel_size, kernel_size, in_filter, out_filter])
+        x = tf.nn.conv2d(inputs, w_conv1, strides=[1, 1, 1, 1], padding='SAME')
+        x = tf.layers.batch_normalization(x, axis=-1, training=training)
+        x = tf.nn.leaky_relu(x, alpha=0.1)
 
         # second
-        w_conv2 = weight_variable(shape=[kernel_size, kernel_size, f1, f2])
+        w_conv2 = weight_variable(shape=[kernel_size, kernel_size, out_filter, out_filter])
         x = tf.nn.conv2d(x, w_conv2, strides=[1, 1, 1, 1], padding='SAME')
-        x = tf.layers.batch_normalization(x, axis=3, training=training)
+        x = tf.layers.batch_normalization(x, axis=-1, training=training)
+        x = tf.nn.leaky_relu(x, alpha=0.1)
+
+        # third
+        w_conv3 = weight_variable(shape=[kernel_size, kernel_size, out_filter, out_filter])
+        x = tf.nn.conv2d(x, w_conv3, strides=[1, 1, 1, 1], padding='SAME')
+        x = tf.layers.batch_normalization(x, axis=-1, training=training)
+        x = tf.nn.leaky_relu(x, alpha=0.1)
 
         # shortcut
-        w_short = weight_variable(shape=[1, 1, in_filter, f2])
-        short_cut = tf.nn.conv2d(short_cut, w_short, strides=[1, stride, stride, 1], padding='SAME')
+        w_short = weight_variable(shape=[1, 1, in_filter, out_filter])
+        short_cut = tf.nn.conv2d(short_cut, w_short, strides=[1, 1, 1, 1], padding='SAME')
 
         # add short cut
         add = tf.add(x, short_cut)
-        add = tf.nn.relu(add)
+        add = tf.nn.max_pool(add, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
+        add = tf.nn.dropout(add, keep_prob=0.9)
 
     return add
 
@@ -74,13 +117,13 @@ def identity_block(inputs, kernel_size, out_filter, in_filter, stage, block, tra
         # first
         w_conv1 = weight_variable(shape=[kernel_size, kernel_size, in_filter, f1])
         x = tf.nn.conv2d(inputs, w_conv1, strides=[1, 1, 1, 1], padding='SAME')
-        x = tf.layers.batch_normalization(x, axis=3, training=training)
+        x = tf.layers.batch_normalization(x, axis=-1, training=training)
         x = tf.nn.relu(x)
 
         # second
         w_conv2 = weight_variable(shape=[kernel_size, kernel_size, f1, f2])
         x = tf.nn.conv2d(x, w_conv2, strides=[1, 1, 1, 1], padding='SAME')
-        x = tf.layers.batch_normalization(x, axis=3, training=training)
+        x = tf.layers.batch_normalization(x, axis=-1, training=training)
 
         # add short cut
         add = tf.add(x, short_cut)
