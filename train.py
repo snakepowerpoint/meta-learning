@@ -39,21 +39,21 @@ def main():
     orig_data = load_dataset(data_dir)
     
     # establish model
-    inputs = tf.placeholder(tf.float32, shape=[None, NUM_CLASS, 84, 84, 3])
-    labels = tf.placeholder(tf.int32, shape=[None, NUM_CLASS, 5])
+    support = tf.placeholder(tf.float32, shape=[None, 84, 84, 3])
+    query = tf.placeholder(tf.float32, shape=[None, 84, 84, 3])
+    labels = tf.placeholder(tf.int32, shape=[None, 5])
     training = tf.placeholder(tf.bool, name='training')
 
-    fc1 = conv4(inputs=inputs, training=training)
+    fc1_support = conv4(inputs=support, training=training) # [25, 512]
+    fc1_query = conv4(inputs=query, training=training) # [75, 512]
 
-    with tf.variable_scope('output'):
-        # output layers
-        w_output = weight_variable(shape=[512, NUM_CLASS])
-        output = tf.matmul(fc1, w_output)
+    mean_vector = tf.zeros(shape=[5, 512])
+    for i in range(5):
+        mean_vector[i] = tf.math.reduce_mean(fc1_support[i*5:(i+1)*5], axis=0)
+    
+    ## input query set
 
-        # convert Euclidean space to angular space
-        fc1_normalized = tf.nn.l2_normalize(fc1, axis=1)
-        w_output_normalized = tf.nn.l2_normalize(w_output, axis=0)
-        cos_dist = tf.matmul(fc1_normalized, w_output_normalized)
+
     
     cross_entropy = loss(labels=labels, outputs=output)
     optimizer = tf.train.AdamOptimizer(1e-3)
@@ -70,7 +70,7 @@ def main():
             # sample a batch of tasks
             x_support, y_support, x_query, y_query = sample_task(orig_data)
 
-            # shuffle data
+            # shuffle data (need to be modified)
             indices = np.arange(x_support.shape[0])
             np.random.shuffle(indices)
             x_support, y_support = x_support[indices], y_support[indices]

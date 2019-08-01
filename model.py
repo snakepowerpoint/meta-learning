@@ -2,6 +2,14 @@ import tensorflow as tf
 
 
 def conv4(inputs, training):
+    """
+    Args:
+        inputs:
+        training:
+    Return:
+        fc1: fully connected layer
+    """
+    
     with tf.variable_scope("conv4"):
         # block 1
         w_conv1 = weight_variable(shape=[3, 3, 3, 32])

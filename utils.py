@@ -54,6 +54,21 @@ def unison_shuffled_copies(a, b):
     return a[p], b[p]
 
 def sample_task(orig_data, way=5, shot=5, query=15, batch_size=32):
+    """
+    Args:
+        orig_data: 
+        way:
+        shot
+        query:
+        batch_size:
+
+    Return:
+        x_support: shape=[way*shot, 84, 84, 3], e.g. [25=5*5, 84, 84, 3]
+        y_support: shape=[way*shot, 5], e.g. [25=5*5, 5]
+        x_query: shape=[way*query, 84, 84, 3], e.g. [75=5*15, 84, 84, 3]
+        y_query: shape=[way*query, 5], e.g. [75=5*15, 5]
+    """
+    
     # sample N=way class
     class_name = list(orig_data['class_dict'].keys())
     sampled_classes = random.sample(class_name, k=way)
