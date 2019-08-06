@@ -48,6 +48,36 @@ def conv4(inputs, training):
 
     return fc1
 
+def conv4_new(inputs, training=True):
+    with tf.variable_scope("conv4"):
+        # block 1
+        x = conv_block(inputs=inputs, out_channels=64, ksize=3, block=1, training=training)
+        # block 2
+        x = conv_block(x, 64, 3, 2, training)
+        # block 3
+        x = conv_block(x, 64, 3, 3, training)
+        # block 4
+        x = conv_block(x, 64, 3, 4, training)
+        
+        # global average pooling
+        avg_pool = tf.reduce_mean(x, axis=[1, 2], name='avg_pool', keepdims=True)
+        flatten = tf.layers.flatten(avg_pool)
+
+        # fc 1
+        #fc1 = tf.layers.dense(flatten, units=1600, activation=tf.nn.relu)
+
+    return flatten
+
+def conv_block(inputs, out_channels, ksize, block, training):
+    block_name = 'block' + str(block)
+    with tf.variable_scope(block_name):
+        x = tf.layers.conv2d(inputs, out_channels, ksize, padding='SAME')
+        x = tf.layers.batch_normalization(x, axis=-1, training=training)
+        x = tf.nn.relu(x)
+        x = tf.nn.max_pool(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
+        
+    return x
+
 def resnet12(inputs, training):  # num_class
     with tf.variable_scope("resnet"):
         # block 1
@@ -139,7 +169,7 @@ def identity_block(inputs, kernel_size, out_filter, in_filter, stage, block, tra
 
     return add
 
-def weight_variable(shape):
+def weight_variable(name, shape):
     """weight_variable generates a weight variable of a given shape."""
     initializer = tf.contrib.layers.xavier_initializer()
-    return tf.Variable(initializer(shape))
+    return tf.get_variable(name=name, shape=shape, initializer=initializer)
