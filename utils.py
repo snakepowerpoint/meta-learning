@@ -41,26 +41,14 @@ def process_orig_datasets(orig_data, train_test_split=0.1):
 
     return X_train, Y_train, X_test, Y_test
 
-def random_mini_batches(X_train, Y_train, mini_batch_size=32, seed=None):
-    # shuffle
 
-    # mini-batch
-
-    return None
-
-def unison_shuffled_copies(a, b):
-    assert len(a) == len(b)
-    p = np.random.permutation(len(a))
-    return a[p], b[p]
-
-def sample_task(orig_data, way=5, shot=5, query=15, batch_size=32):
+def sample_task(orig_data, way=5, shot=5, query=15):
     """
     Args:
         orig_data: 
         way:
         shot
         query:
-        batch_size:
 
     Return:
         x_support: shape=[way*shot, 84, 84, 3], e.g. [25=5*5, 84, 84, 3]
@@ -95,3 +83,19 @@ def sample_task(orig_data, way=5, shot=5, query=15, batch_size=32):
     y_query = np.concatenate(y_query, axis=0)
     
     return x_support, y_support, x_query, y_query
+
+
+def generate_evaluation_data(orig_data, way=5, shot=5, query=15, batch_size=600):
+    eval_data = []
+    for _ in range(batch_size):
+        # sample one episode
+        x_support, y_support, x_query, y_query = sample_task(orig_data, way, shot, query)
+
+        # shuffle data
+        indices = np.arange(x_support.shape[0])
+        np.random.shuffle(indices)
+        x_support, y_support = x_support[indices], y_support[indices]
+
+        eval_data.append([x_support, y_support, x_query, y_query])
+
+    return eval_data
