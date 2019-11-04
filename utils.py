@@ -1,11 +1,13 @@
 import pickle
 import os
+import cv2
 
 # keras
 from keras.utils.np_utils import to_categorical
 
 import numpy as np
 import random
+
 
 def load_dataset(data_dir):
     with open(data_dir, 'rb') as f:
@@ -40,7 +42,6 @@ def process_orig_datasets(orig_data, train_test_split=0.1):
     X_test, Y_test = imgs[test_idx], categorical_labels[test_idx]
 
     return X_train, Y_train, X_test, Y_test
-
 
 def sample_task(orig_data, way=5, shot=5, query=15):
     """
@@ -84,7 +85,6 @@ def sample_task(orig_data, way=5, shot=5, query=15):
     
     return x_support, y_support, x_query, y_query
 
-
 def generate_evaluation_data(orig_data, way=5, shot=5, query=15, batch_size=600):
     eval_data = []
     for _ in range(batch_size):
@@ -99,3 +99,32 @@ def generate_evaluation_data(orig_data, way=5, shot=5, query=15, batch_size=600)
         eval_data.append([x_support, y_support, x_query, y_query])
 
     return eval_data
+
+def resize_image(image, size):
+    resized = []
+    num_image = image.shape[0]
+    for i_img in range(num_image):
+        img = image[i_img, ...]
+        resized_img = cv2.resize(img, dsize=size, interpolation=cv2.INTER_CUBIC)
+        resized.append(resized_img)
+    
+    return np.stack(resized, axis=0)
+
+def generate_few_shot_style(images, image_labels, num_sample):
+    out_img = []
+    out_label = []
+    labels = np.unique(image_labels)
+    for label in labels:
+        target_img = images[image_labels == label, ...]
+        selected_idx = np.random.choice(target_img.shape[0], size=num_sample, replace=False)
+        selected_img = target_img[selected_idx, ...]
+
+        out_img.append(selected_img)
+        out_label.append(np.repeat(label, num_sample))
+
+    out_img = np.vstack(out_img)
+    out_label = np.concatenate(out_label)
+    
+    p = np.random.permutation(len(out_img))
+    
+    return out_img[p, ...], out_label[p]

@@ -1,4 +1,4 @@
-# framework
+# tensorflow
 import tensorflow as tf
 from tensorflow.contrib.layers import xavier_initializer
 import tensorflow.contrib.slim as slim
@@ -7,20 +7,24 @@ import tensorflow.contrib.slim as slim
 import numpy as np
 
 # customerized 
-from model import conv4, conv4_new, resnet12
-from utils import load_dataset, sample_task, generate_evaluation_data
+from model import encoder, decoder, adain
+from losses import compute_content_loss, compute_style_loss
+from utils import resize_image, generate_few_shot_style
+
+import pickle as pkl
+import cv2
 
 
 # hyper-parameters
 N_WAY=5
 K_SHOT=1
 K_QUERY=15
-EPISODE = 30000
+EPISODE=30000
 
 def compute_accuracy():
     return None
 
-def loss(labels, outputs):
+def compute_loss(labels, outputs):
     with tf.name_scope('loss'):
         cross_entropy = tf.losses.softmax_cross_entropy(onehot_labels=labels, logits=outputs)
     return cross_entropy
@@ -127,94 +131,144 @@ def model_summary():
     slim.model_analyzer.analyze_vars(model_vars, print_info=True)
 
 def main():
-    # load training data
-    data_dir = 'data/mini-imagenet/mini-imagenet-cache-train.pkl'
-    orig_data = load_dataset(data_dir)
+    ## prepare data
+    # load MNIST and MNIST-M
+    (m_train, m_train_y), (m_test, m_test_y) = tf.keras.datasets.mnist.load_data()
+    mm = pkl.load(open('data/mnistm_data.pkl', 'rb'))
+    mm_train, mm_train_y = mm['train'], mm['train_label']
 
-    # load test data
-    data_dir = 'data/mini-imagenet/mini-imagenet-cache-test.pkl'
-    test_orig_data = load_dataset(data_dir)
-    test_data = generate_evaluation_data(test_orig_data, way=N_WAY, shot=K_SHOT, query=K_QUERY)
+    # #  keep numbers 0-4 in MNIST as content, and numbers 5-9 in MNIST-M as style
+    # content_image = m_train[m_train_y < 5, ...]
+    # content_image_y = m_train_y[m_train_y < 5]
+    # content_image = resize_image(content_image, size=(32, 32))
+    # content_image = np.repeat(content_image[..., np.newaxis], 3, axis=-1)
+    # test_content_image = m_train[m_train_y >= 5, ...]
     
+    # style_image = mm_train[mm_train_y >= 5, ...]
+    # style_image_y = mm_train[mm_train_y >= 5]
+    # style_image, style_image_y = generate_few_shot_style(style_image, style_image_y, num_sample=5)
+    # style_image = resize_image(style_image, size=(32, 32))
+
+    # use all train data in MNIST as content image, and all train data in MNIST-M as style image
+    content_image = resize_image(m_train, size=(32, 32))
+    content_image = np.repeat(content_image[..., np.newaxis], 3, axis=-1)
+    test_content_image = m_test
+
+    style_image = resize_image(mm_train, size=(32, 32))
+
+    
+    ## prepare model
     # inputs placeholder
-    support = tf.placeholder(tf.float32, shape=[None, 84, 84, 3])
-    support_labels = tf.placeholder(tf.float32, shape=[None, 5])
-    query = tf.placeholder(tf.float32, shape=[None, 84, 84, 3])
-    query_labels = tf.placeholder(tf.float32, shape=[None, 5])
-    training = tf.placeholder(tf.bool, name='training')
-
-    # establish model
-    fc1_support = conv4_new(inputs=support, training=training) # [25, 512]
-    fc1_query = conv4_new(inputs=query, reuse=True, training=False)  # [75, 512]
-
-    # compute prototype from support set
-    prototype = generate_prototype(fc1_support, support_labels)
+    c_img = tf.placeholder(tf.float32, shape=[None, 32, 32, 3])
+    s_img = tf.placeholder(tf.float32, shape=[None, 32, 32, 3])
     
-    # compute distance
-    dists = compute_distance(fc1_query, prototype)
-    log_p_y = tf.nn.log_softmax(-dists)
-    loss_per_query = tf.reduce_sum(tf.multiply(query_labels, log_p_y), axis=-1)
-    ce_loss = -tf.reduce_mean(loss_per_query)
-    acc = compute_acc(log_p_y, query_labels)
+    # establish model
+    c_encode, _ = encoder(c_img)
+    s_encode, s_layers = encoder(s_img, reuse=True)
 
-    optimizer = tf.train.AdamOptimizer(1e-3)
-    train_op = optimizer.minimize(ce_loss)
+    c_adain_encode = adain(c_encode, s_encode)
+    styled_img = decoder(c_adain_encode)
+    styled_encode, styled_layers = encoder(styled_img, reuse=True)
+
+    # loss
+    content_loss = compute_content_loss(styled_encode, c_adain_encode)
+    style_loss = compute_style_loss(styled_layers, s_layers)
+    total_loss = content_loss + 0.01 * style_loss
+
+    # optimizer 
+    optimizer = tf.train.AdamOptimizer(1e-4)
+    train_op = optimizer.minimize(total_loss)
     
     model_summary()
 
-    # training
+    ## training
     init = tf.global_variables_initializer()
     with tf.Session() as sess:
+        # Creates a file writer for the log directory.
+        logdir = "logs/"
+        file_writer = tf.summary.FileWriter(logdir, sess.graph)
+
+        # store variables
+        tf.summary.image("Content image", c_img, max_outputs=10)
+        tf.summary.image("Style image", s_img, max_outputs=10)
+        tf.summary.image("Styled image", styled_img, max_outputs=10)
+        tf.summary.scalar("Content loss", content_loss)
+        tf.summary.scalar("Style loss", style_loss)
+        tf.summary.scalar("Total loss", total_loss)
+        merged = tf.summary.merge_all()
+
         sess.run(init)
 
+        # total number of data
+        num_data = content_image.shape[0]
+        batch_size = 8
+        num_batch = num_data // batch_size
+
         for i_episode in range(EPISODE):
-            # sample a batch of tasks
-            x_support, y_support, x_query, y_query = sample_task(orig_data, way=N_WAY, shot=K_SHOT, query=K_QUERY)
+            # shuffle data
+            np.random.shuffle(content_image)
+            np.random.shuffle(style_image)
 
-            # shuffle data 
-            indices = np.arange(x_support.shape[0])
-            np.random.shuffle(indices)
-            x_support, y_support = x_support[indices], y_support[indices]
+            for i_batch in range(num_batch):
+                # get a batch of content
+                c_image = content_image[i_batch*batch_size: (i_batch+1)*batch_size, ...]
+                c_image = c_image / 255
 
-            sess.run(train_op, feed_dict={support: x_support,
-                                          support_labels: y_support,
-                                          query: x_query,
-                                          query_labels: y_query,
-                                          training: True})
+                # random sample a batch of style
+                idx = np.random.choice(style_image.shape[0], batch_size, replace=False)
+                s_image = style_image[idx, ...]
+                s_image = s_image / 255
 
-            if i_episode % 200 == 0:
-                train_loss, accuracy = sess.run([ce_loss, acc], feed_dict={support: x_support,
-                                                                           support_labels: y_support,
-                                                                           query: x_query,
-                                                                           query_labels: y_query,
-                                                                           training: False})
-                print('Episode: %d, training cost: %g, acc: %g' % (i_episode, train_loss, accuracy))
-                
-                idx = np.random.choice(range(len(test_data)))
-                x_support, y_support, x_query, y_query = test_data[idx]
-                test_loss, accuracy = sess.run([ce_loss, acc], feed_dict={support: x_query,
-                                                                          support_labels: y_query,
-                                                                          query: x_query,
-                                                                          query_labels: y_query,
-                                                                          training: False})
-                print('Episode: %d, test cost: %g, acc: %g' % (i_episode, test_loss, accuracy))
-            
-        # evaluation for all testing episodes
-        test_loss_all = []
-        acc_all = []
-        num_episode = len(test_data)
-        for idx in range(num_episode):
-            x_support, y_support, x_query, y_query = test_data[idx]
-            test_loss, accuracy = sess.run([ce_loss, acc], feed_dict={support: x_query,
-                                                                      support_labels: y_query,
-                                                                      query: x_query,
-                                                                      query_labels: y_query,
-                                                                      training: False})
-            test_loss_all.append(test_loss)
-            acc_all.append(accuracy)
-        print('Final test cost: %g, acc: %g, acc_std: %g' %
-              (np.mean(test_loss_all), np.mean(acc_all), np.std(acc_all)))
+                # training                 
+                _, train_loss = sess.run([train_op, total_loss], feed_dict={
+                    c_img: c_image,
+                    s_img: s_image
+                })
 
+                if i_batch % 100 == 0:
+                    # evaluation on test content image
+                    np.random.shuffle(test_content_image)
+                    
+                    test_c_image = test_content_image[:10, ...]
+                    test_c_image = resize_image(test_c_image, size=(32, 32))
+                    test_c_image = np.repeat(test_c_image[..., np.newaxis], 3, axis=-1)
+                    test_c_image = test_c_image / 255
+
+                    test_s_image = style_image[:10, ...] / 255
+
+                    summary, test_loss = sess.run([merged, total_loss], feed_dict={
+                        c_img: test_c_image,
+                        s_img: test_s_image
+                    })
+
+                    # log all variables
+                    #num_iter = i_episode * num_batch + i_batch
+                    file_writer.add_summary(summary, global_step=i_episode * num_batch + i_batch)
+
+                    print('Episode: %d, batch: %d, training cost: %g, test cost: %g' %
+                          (i_episode, i_batch, train_loss, test_loss))
+
+                    
+        file_writer.close()
+
+            # if i_episode % 100 == 0:
+            #     # evaluation on test data
+            #     content_image = m_train[m_train_y < 5, ...]
+            #     content_image_y = m_train_y[m_train_y < 5]
+            #     content_image = resize_image(content_image, size=(32, 32))
+            #     content_image = np.expand_dims(content_image, axis=-1)
+
+            #     num_test = len(test_data)
+            #     test_losses = []
+            #     for idx in range(num_test):
+            #         test_c_img, test_s_img = test_data[idx]
+            #         test_loss = sess.run([total_loss], feed_dict={
+            #             c_img: test_c_img,
+            #             s_img: test_s_img
+            #         })
+            #         test_losses.append(test_loss)
+
+            #     print('Test cost: %g' % (np.mean(test_losses)))
 
 
 if __name__ == '__main__':
