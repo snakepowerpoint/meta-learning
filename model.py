@@ -4,40 +4,6 @@ import numpy as np
 
 
 
-def conv4(inputs, reuse=False, training=True):
-    with tf.variable_scope("conv4", reuse=reuse):
-        # block 1
-        x = conv_block(inputs=inputs, out_channels=64, ksize=3, block=1, training=training)
-        x = spatial_attention(feature_map=x, out_channels=64, block=1)
-
-        # block 2
-        x = conv_block(x, 64, 3, 2, training)
-        x = spatial_attention(feature_map=x, out_channels=64, block=2)
-
-        # block 3
-        x = conv_block(x, 64, 3, 3, training)
-        x = spatial_attention(feature_map=x, out_channels=64, block=3)
-
-        # block 4
-        x = conv_block(x, 64, 3, 4, training)
-        x = spatial_attention(feature_map=x, out_channels=64, block=4)
-
-        # global average pooling
-        avg_pool = tf.reduce_mean(x, axis=[1, 2], name='avg_pool', keepdims=True)
-        flatten = tf.layers.flatten(avg_pool)
-
-    return flatten
-
-def conv_block(inputs, out_channels, ksize, block, training):
-    block_name = 'block' + str(block)
-    with tf.variable_scope(block_name):
-        x = tf.layers.conv2d(inputs, out_channels, ksize, padding='same')
-        x = tf.layers.batch_normalization(x, axis=-1, training=training)
-        x = tf.nn.relu(x)
-        x = tf.layers.max_pooling2d(inputs=x, pool_size=[2, 2], strides=2)
-
-    return x
-
 def encoder(inputs, reuse=False):    
     with tf.variable_scope("encoder", reuse=reuse):
         layers = {}
@@ -102,6 +68,40 @@ def adain(content_encode, style_encode, epsilon=1e-5):
 
     return s_std * (content_encode - c_mean) / c_std + s_mean
 
+def conv4(inputs, reuse=False, training=True):
+    with tf.variable_scope("conv4", reuse=reuse):
+        # block 1
+        x = conv_block(inputs=inputs, out_channels=64, ksize=3, block=1, training=training)
+        x = spatial_attention(feature_map=x, out_channels=64, block=1)
+
+        # block 2
+        x = conv_block(x, 64, 3, 2, training)
+        x = spatial_attention(feature_map=x, out_channels=64, block=2)
+
+        # block 3
+        x = conv_block(x, 64, 3, 3, training)
+        x = spatial_attention(feature_map=x, out_channels=64, block=3)
+
+        # block 4
+        x = conv_block(x, 64, 3, 4, training)
+        x = spatial_attention(feature_map=x, out_channels=64, block=4)
+
+        # global average pooling
+        avg_pool = tf.reduce_mean(x, axis=[1, 2], name='avg_pool', keepdims=True)
+        flatten = tf.layers.flatten(avg_pool)
+
+    return flatten
+
+def conv_block(inputs, out_channels, ksize, block, training):
+    block_name = 'block' + str(block)
+    with tf.variable_scope(block_name):
+        x = tf.layers.conv2d(inputs, out_channels, ksize, padding='same')
+        x = tf.layers.batch_normalization(x, axis=-1, training=training)
+        x = tf.nn.relu(x)
+        x = tf.layers.max_pooling2d(inputs=x, pool_size=[2, 2], strides=2)
+
+    return x
+
 def spatial_attention(feature_map, out_channels, block):
     block_name = 'block' + str(block) + '_spa_att'
     with tf.variable_scope(block_name):
@@ -130,7 +130,6 @@ def spatial_attention(feature_map, out_channels, block):
         x = (1 + feature_map) * x
 
     return x
-
 
 def resnet12(inputs, training):  # num_class
     with tf.variable_scope("resnet"):
@@ -285,7 +284,7 @@ class VGG19(object):
 
 
     def get_wb(self, layers, i):
-        # load weights from pre-trained vgg model
+        # load weights (set as constant) from pre-trained vgg model
         w = tf.constant(layers[i][0][0][0][0][0])
         bias = layers[i][0][0][0][0][1]
         b = tf.constant(np.reshape(bias, (bias.size)))
