@@ -128,3 +128,15 @@ def generate_few_shot_style(images, image_labels, num_sample):
     p = np.random.permutation(len(out_img))
     
     return out_img[p, ...], out_label[p]
+
+def generate_prototype(fc1_support, support_labels):
+    num_class = support_labels.shape[1]
+
+    mean_vector = []
+    for i_class in range(num_class):
+        i_class_mask = tf.equal(support_labels[:, i_class], 1)
+        fc1_i_class = tf.boolean_mask(fc1_support, i_class_mask)
+        mean_vector.append(tf.reduce_mean(fc1_i_class, axis=0))
+    mean_vector = tf.stack(mean_vector)
+
+    return mean_vector
