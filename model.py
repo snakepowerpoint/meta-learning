@@ -60,15 +60,24 @@ def decoder(encode):
 
         # up sampling 4 (output)
         x = tf.layers.conv2d(x, filters=64, kernel_size=(3, 3), padding='same', activation='relu')
-        x = tf.layers.conv2d(x, filters=3, kernel_size=(3, 3), padding='same', activation='relu')
+        x = tf.layers.conv2d(x, filters=3, kernel_size=(3, 3), padding='same', activation='sigmoid')
 
     return x
 
 def adain(content_encode, style_encode, epsilon=1e-5):
     # compute mean and std 
     c_mean, c_var = tf.nn.moments(content_encode, axes=[1, 2], keep_dims=True)
+    c_std = tf.sqrt(c_var + epsilon)
+    
+    # s_mean, s_var = [], []
+    # for i_encode in style_encode:
+    #     mean, var = tf.nn.moments(i_encode, axes=[1, 2], keep_dims=True)
+    #     s_mean.append(mean)
+    #     s_var.append(var)
+    # s_mean, s_var = tf.reduce_mean(s_mean), tf.reduce_mean(s_var)
+    
     s_mean, s_var = tf.nn.moments(style_encode, axes=[1, 2], keep_dims=True)
-    c_std, s_std = tf.sqrt(c_var + epsilon), tf.sqrt(s_var + epsilon)
+    s_std = tf.sqrt(s_var + epsilon)
 
     return s_std * (content_encode - c_mean) / c_std + s_mean
 

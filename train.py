@@ -12,6 +12,7 @@ import pickle as pkl
 from model import decoder, adain, VGG19
 from losses import compute_content_loss, compute_style_loss
 from utils import resize_image, generate_few_shot_style
+import settings
 
 # miscellaneous
 import gc
@@ -96,11 +97,19 @@ def main():
 
     # inputs placeholder
     c_img = tf.placeholder(tf.float32, shape=[None, 32, 32, 3])
-    s_img = tf.placeholder(tf.float32, shape=[None, 32, 32, 3])
+    s_img = tf.placeholder(tf.float32, shape=[None, settings.num_style, 32, 32, 3])
     
-    # establish model
+    # encode content 
     c_encode = encoder.vggnet(c_img)
-    s_encode = encoder.vggnet(s_img)
+    
+    # encode style and take average on feature map
+    s_encode_all = []
+    for i in range(np.shape(s_img)[1]):
+        s_encode_all.append(encoder.vggnet(s_img[:, i, ...]))
+    
+    s_encode = {}
+    for layer in s_encode_all[0]:
+        s_encode[layer] = (s_encode_all[0][layer] + s_encode_all[1][layer]) / 2
 
     c_adain_encode = adain(c_encode['conv4_1'], s_encode['conv4_1'])
     styled_img = decoder(c_adain_encode)
@@ -109,11 +118,13 @@ def main():
     # loss
     content_loss = compute_content_loss(styled_encode['conv4_1'], c_adain_encode)
     style_loss = compute_style_loss(styled_encode, s_encode)
-    total_loss = content_loss + 0.01 * style_loss
+    total_loss = content_loss + settings.loss_lambda * style_loss
     
-    # optimizer 
-    optimizer = tf.train.AdamOptimizer(1e-3)
-    train_op = optimizer.minimize(total_loss)
+    # optimizer
+    global_step = tf.Variable(0, trainable=False, name='global_step')
+    rate = tf.train.inverse_time_decay(settings.lr, global_step, decay_steps=1, decay_rate=5e-5)
+    optimizer = tf.train.AdamOptimizer(rate)
+    train_op = optimizer.minimize(total_loss, global_step=global_step)
     
     model_summary()
 
@@ -122,12 +133,12 @@ def main():
     init = tf.global_variables_initializer()
     with tf.Session() as sess:
         # Creates a file writer for the log directory.
-        file_writer_train = tf.summary.FileWriter("logs/train_l1e3/", sess.graph)
-        file_writer_test = tf.summary.FileWriter("logs/test_l1e3/", sess.graph)
+        file_writer_train = tf.summary.FileWriter("logs/train_l1e4_decay_mulS/", sess.graph)
+        file_writer_test = tf.summary.FileWriter("logs/test_l1e4_decay_mulS/", sess.graph)
 
         # store variables
         tf.summary.image("Content image", c_img, max_outputs=10)
-        tf.summary.image("Style image", s_img, max_outputs=10)
+        tf.summary.image("Style image", s_img[:, 0, ...], max_outputs=10)
         tf.summary.image("Styled image", styled_img, max_outputs=10)
         tf.summary.scalar("Content loss", content_loss)
         tf.summary.scalar("Style loss", style_loss)
@@ -137,55 +148,58 @@ def main():
         sess.run(init)
 
         # total number of data
-        num_data = content_image.shape[0]
+        num_content_data = content_image.shape[0]
+        num_style_data = style_image.shape[0]
 
-        batch_size = 8
-        num_batch = num_data // batch_size
-        num_episode = 3000
+        batch_size = settings.batch_size
+        num_batch = num_content_data // batch_size
+        num_iter = settings.num_iter
 
-        for i_episode in range(num_episode):
+        for i_iter in range(num_iter):
+            i_batch = i_iter % num_batch
             # shuffle data
-            np.random.shuffle(content_image)
-            np.random.shuffle(style_image)
+            if i_batch == 0:
+                np.random.shuffle(content_image)
+                np.random.shuffle(style_image)
 
-            for i_batch in range(num_batch):
-                # get a batch of content
-                c_image = content_image[i_batch*batch_size: (i_batch+1)*batch_size, ...]
+            # get a batch of content
+            c_image = content_image[i_batch*batch_size: (i_batch+1)*batch_size, ...]
+            
+            # random sample a batch of style
+            idx = np.random.choice(num_style_data, batch_size*settings.num_style, replace=True)
+            s_image = style_image[idx, ...]
+            s_image = s_image.reshape(batch_size, settings.num_style, 32, 32, 3)
+
+            # training                 
+            _, train_loss, i_step = sess.run([train_op, total_loss, global_step], feed_dict={
+                c_img: c_image,
+                s_img: s_image
+            })
+            
+            if i_iter % 100 == 0:
+                # evaluation on test content image
+                np.random.shuffle(test_content_image)
                 
-                # random sample a batch of style
-                idx = np.random.choice(style_image.shape[0], batch_size, replace=False)
-                s_image = style_image[idx, ...]
-                
-                # training                 
-                _, train_loss = sess.run([train_op, total_loss], feed_dict={
+                test_c_image = test_content_image[:8, ...]
+                test_s_image = style_image[:16, ...]
+                test_s_image = test_s_image.reshape(8, settings.num_style, 32, 32, 3)
+
+                summary_train, train_loss = sess.run([merged, total_loss], feed_dict={
                     c_img: c_image,
                     s_img: s_image
                 })
 
-                if i_batch % 100 == 0:
-                    # evaluation on test content image
-                    np.random.shuffle(test_content_image)
-                    
-                    test_c_image = test_content_image[:10, ...]
-                    test_s_image = style_image[:10, ...]
+                summary_test, test_loss = sess.run([merged, total_loss], feed_dict={
+                    c_img: test_c_image,
+                    s_img: test_s_image
+                })
 
-                    summary_train, train_loss = sess.run([merged, total_loss], feed_dict={
-                        c_img: c_image,
-                        s_img: s_image
-                    })
+                # log all variables
+                file_writer_train.add_summary(summary_train, global_step=i_iter)
+                file_writer_test.add_summary(summary_test, global_step=i_iter)
 
-                    summary_test, test_loss = sess.run([merged, total_loss], feed_dict={
-                        c_img: test_c_image,
-                        s_img: test_s_image
-                    })
-
-                    # log all variables
-                    num_iter = i_episode * num_batch + i_batch
-                    file_writer_train.add_summary(summary_train, global_step=num_iter)
-                    file_writer_test.add_summary(summary_test, global_step=num_iter)
-
-                    print('Episode: %d, batch: %d, training cost: %g, test cost: %g' %
-                          (i_episode, i_batch, train_loss, test_loss))
+                print('Iteration: %d, batch: %d, step: %d, training cost: %g, test cost: %g' %
+                        (i_iter, i_batch, i_step, train_loss, test_loss))
 
         file_writer_train.close()
         file_writer_test.close()
