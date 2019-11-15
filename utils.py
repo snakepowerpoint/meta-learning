@@ -9,13 +9,14 @@ import numpy as np
 import random
 
 
-def load_dataset(data_dir):
+def load_dataset(data_dir):  # go to load_data.py
     with open(data_dir, 'rb') as f:
         train_data = pickle.load(f)
 
     return train_data
 
-def process_orig_datasets(orig_data, train_test_split=0.1):
+
+def process_orig_datasets(orig_data, train_test_split=0.1):  # go to load_data.py
     imgs = orig_data['image_data']
     labels = [no_images for _, no_images in sorted(orig_data['class_dict'].items())]
 
@@ -43,7 +44,7 @@ def process_orig_datasets(orig_data, train_test_split=0.1):
 
     return X_train, Y_train, X_test, Y_test
 
-def sample_task(orig_data, way=5, shot=5, query=15):
+def sample_task(orig_data, way=5, shot=5, query=15): # go to load_data.py
     """
     Args:
         orig_data: 

@@ -64,22 +64,26 @@ def decoder(encode):
 
     return x
 
-def adain(content_encode, style_encode, epsilon=1e-5):
-    # compute mean and std 
-    c_mean, c_var = tf.nn.moments(content_encode, axes=[1, 2], keep_dims=True)
+def adain(content_encode, style_encode, adain_layer, num_style, epsilon=1e-5):
+    # get last cnn feature map of content and style for adain
+    content_feature_map = content_encode[adain_layer]
+    style_feature_map = style_encode[adain_layer]
+    
+    # compute statistics of content and style images
+    c_mean, c_var = tf.nn.moments(content_feature_map, axes=[1, 2], keep_dims=True)
     c_std = tf.sqrt(c_var + epsilon)
     
-    # s_mean, s_var = [], []
-    # for i_encode in style_encode:
-    #     mean, var = tf.nn.moments(i_encode, axes=[1, 2], keep_dims=True)
-    #     s_mean.append(mean)
-    #     s_var.append(var)
-    # s_mean, s_var = tf.reduce_mean(s_mean), tf.reduce_mean(s_var)
-    
-    s_mean, s_var = tf.nn.moments(style_encode, axes=[1, 2], keep_dims=True)
+    s_mean, s_var = tf.nn.moments(style_feature_map, axes=[1, 2], keep_dims=True)
     s_std = tf.sqrt(s_var + epsilon)
+    
+    # average statistics of style feature map
+    s_mean = tf.reshape(s_mean, tf.concat([[-1, num_style], tf.shape(s_mean)[1:]], axis=0))
+    s_std = tf.reshape(s_std, tf.concat([[-1, num_style], tf.shape(s_std)[1:]], axis=0))
 
-    return s_std * (content_encode - c_mean) / c_std + s_mean
+    s_mean = tf.reduce_mean(s_mean, axis=1)
+    s_std = tf.reduce_mean(s_std, axis=1)
+
+    return s_std * (content_feature_map - c_mean) / c_std + s_mean
 
 
 

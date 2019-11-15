@@ -19,7 +19,7 @@ import gc
 
 
 
-def compute_distance(fc1_query, prototype):
+def compute_distance(fc1_query, prototype): # go to model.py
     '''
     Compute distance
 
@@ -39,7 +39,7 @@ def compute_distance(fc1_query, prototype):
     
     return dist
 
-def compute_acc(prediction, one_hot_labels):
+def compute_acc(prediction, one_hot_labels): 
     labels = tf.argmax(one_hot_labels, axis=1)
     acc = tf.reduce_mean(tf.to_float(tf.equal(tf.argmax(prediction, axis=-1), labels)))
     return acc
@@ -95,29 +95,25 @@ def main():
     model_path = "model/imagenet-vgg-verydeep-19.mat"
     encoder = VGG19(model_path)
 
-    # inputs placeholder
+    # inputs placeholder (multiple style images)
+    max_num_style = settings.max_num_style
     c_img = tf.placeholder(tf.float32, shape=[None, 32, 32, 3])
-    s_img = tf.placeholder(tf.float32, shape=[None, settings.num_style, 32, 32, 3])
+    s_img = tf.placeholder(tf.float32, shape=[None, 32, 32, 3])
+    num_style = tf.placeholder(tf.int32)
     
-    # encode content 
+    # encode content and style
     c_encode = encoder.vggnet(c_img)
+    s_encode = encoder.vggnet(s_img)
     
-    # encode style and take average on feature map
-    s_encode_all = []
-    for i in range(np.shape(s_img)[1]):
-        s_encode_all.append(encoder.vggnet(s_img[:, i, ...]))
-    
-    s_encode = {}
-    for layer in s_encode_all[0]:
-        s_encode[layer] = (s_encode_all[0][layer] + s_encode_all[1][layer]) / 2
-
-    c_adain_encode = adain(c_encode['conv4_1'], s_encode['conv4_1'])
+    # AdaIN
+    adain_layer = settings.adain_layer
+    c_adain_encode = adain(c_encode, s_encode, adain_layer, num_style)
     styled_img = decoder(c_adain_encode)
     styled_encode = encoder.vggnet(styled_img)
 
     # loss
-    content_loss = compute_content_loss(styled_encode['conv4_1'], c_adain_encode)
-    style_loss = compute_style_loss(styled_encode, s_encode)
+    content_loss = compute_content_loss(styled_encode[adain_layer], c_adain_encode)
+    style_loss = compute_style_loss(styled_encode, s_encode, num_style)
     total_loss = content_loss + settings.loss_lambda * style_loss
     
     # optimizer
@@ -133,13 +129,13 @@ def main():
     init = tf.global_variables_initializer()
     with tf.Session() as sess:
         # Creates a file writer for the log directory.
-        file_writer_train = tf.summary.FileWriter("logs/train_l1e4_decay_mulS/", sess.graph)
-        file_writer_test = tf.summary.FileWriter("logs/test_l1e4_decay_mulS/", sess.graph)
+        file_writer_train = tf.summary.FileWriter("logs/train_l1e4_decay_mulStyle/", sess.graph)
+        file_writer_test = tf.summary.FileWriter("logs/test_l1e4_decay_mulStyle/", sess.graph)
 
         # store variables
-        tf.summary.image("Content image", c_img, max_outputs=10)
-        tf.summary.image("Style image", s_img[:, 0, ...], max_outputs=10)
-        tf.summary.image("Styled image", styled_img, max_outputs=10)
+        tf.summary.image("Content image", c_img, max_outputs=8)
+        tf.summary.image("Style image", s_img, max_outputs=8)
+        tf.summary.image("Styled image", styled_img, max_outputs=8)
         tf.summary.scalar("Content loss", content_loss)
         tf.summary.scalar("Style loss", style_loss)
         tf.summary.scalar("Total loss", total_loss)
@@ -150,6 +146,9 @@ def main():
         # total number of data
         num_content_data = content_image.shape[0]
         num_style_data = style_image.shape[0]
+        num_test = 8
+
+        max_num_style = settings.max_num_style
 
         batch_size = settings.batch_size
         num_batch = num_content_data // batch_size
@@ -157,41 +156,46 @@ def main():
 
         for i_iter in range(num_iter):
             i_batch = i_iter % num_batch
+
             # shuffle data
             if i_batch == 0:
                 np.random.shuffle(content_image)
                 np.random.shuffle(style_image)
 
-            # get a batch of content
+            # get a batch of content images 
             c_image = content_image[i_batch*batch_size: (i_batch+1)*batch_size, ...]
             
-            # random sample a batch of style
-            idx = np.random.choice(num_style_data, batch_size*settings.num_style, replace=True)
+            # get a batch of style images (batch size * num_style)
+            n_style = np.random.randint(low=1, high=max_num_style)
+            idx = np.random.choice(num_style_data, batch_size * n_style, replace=True)
             s_image = style_image[idx, ...]
-            s_image = s_image.reshape(batch_size, settings.num_style, 32, 32, 3)
-
+            
             # training                 
             _, train_loss, i_step = sess.run([train_op, total_loss, global_step], feed_dict={
                 c_img: c_image,
-                s_img: s_image
+                s_img: s_image,
+                num_style: n_style
             })
             
             if i_iter % 100 == 0:
                 # evaluation on test content image
                 np.random.shuffle(test_content_image)
                 
-                test_c_image = test_content_image[:8, ...]
-                test_s_image = style_image[:16, ...]
-                test_s_image = test_s_image.reshape(8, settings.num_style, 32, 32, 3)
-
+                # get several content and style images
+                test_c_image = test_content_image[:num_test, ...]
+                idx = np.random.choice(num_style_data, num_test * n_style, replace=True)
+                test_s_image = style_image[idx, ...]
+                
                 summary_train, train_loss = sess.run([merged, total_loss], feed_dict={
                     c_img: c_image,
-                    s_img: s_image
+                    s_img: s_image,
+                    num_style: n_style
                 })
 
                 summary_test, test_loss = sess.run([merged, total_loss], feed_dict={
                     c_img: test_c_image,
-                    s_img: test_s_image
+                    s_img: test_s_image,
+                    num_style: n_style
                 })
 
                 # log all variables

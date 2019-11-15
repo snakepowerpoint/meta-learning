@@ -4,19 +4,27 @@ import tensorflow as tf
 def compute_content_loss(styled_image_encode, c_adain_encode):
     return tf.reduce_mean(tf.squared_difference(styled_image_encode, c_adain_encode))
 
-def compute_style_loss(styled_encode_layers, s_encode_layers, epsilon=1e-6):
-    styled_encode_layers = {k: v for k, v in styled_encode_layers.items() if 'conv' in k}
-    s_encode_layers = {k: v for k, v in s_encode_layers.items() if 'conv' in k}
+def compute_style_loss(styled_encode_layers, s_encode_layers, num_style, epsilon=1e-6):
+    styled_encode_layers = {k: v for k, v in styled_encode_layers.items() if '_1' in k}
+    s_encode_layers = {k: v for k, v in s_encode_layers.items() if '_1' in k}
 
     losses = {}
     for layer in styled_encode_layers:
         styled, s = styled_encode_layers[layer], s_encode_layers[layer]
 
+        # compute statistics of styled and style images
         styled_mean, styled_var = tf.nn.moments(styled, axes=[1, 2])
-        s_mean, s_var = tf.nn.moments(s, axes=[1, 2])
-
         styled_std = tf.sqrt(styled_var + epsilon)
+
+        s_mean, s_var = tf.nn.moments(s, axes=[1, 2])
         s_std = tf.sqrt(s_var + epsilon)
+
+        # average statistics over multiple style images
+        s_mean = tf.reshape(s_mean, tf.concat([[-1, num_style], tf.shape(s_mean)[1:]], axis=0))
+        s_std = tf.reshape(s_std, tf.concat([[-1, num_style], tf.shape(s_std)[1:]], axis=0))
+
+        s_mean = tf.reduce_mean(s_mean, axis=1)
+        s_std = tf.reduce_mean(s_std, axis=1)
 
         mean_loss = tf.reduce_mean(tf.squared_difference(styled_mean, s_mean))
         std_loss = tf.reduce_mean(tf.squared_difference(styled_std, s_std))
